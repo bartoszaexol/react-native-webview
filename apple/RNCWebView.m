@@ -17,11 +17,16 @@
 
 #import "objc/runtime.h"
 
+#import "GULReachabilityChecker.h"
+
+
+
 static NSTimer *keyboardTimer;
 static NSString *const HistoryShimName = @"ReactNativeHistoryShim";
 static NSString *const MessageHandlerName = @"ReactNativeWebView";
 static NSURLCredential* clientAuthenticationCredential;
 static NSDictionary* customCertificatesForHost;
+GULReachabilityChecker *grc;
 
 NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
 
@@ -119,6 +124,8 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
 - (instancetype)initWithFrame:(CGRect)frame
 {
   if ((self = [super initWithFrame:frame])) {
+     grc = [[GULReachabilityChecker alloc] initWithReachabilityDelegate:nil withHost:nil];
+      [grc start];
     #if !TARGET_OS_OSX
     super.backgroundColor = [UIColor clearColor];
     #else
@@ -227,6 +234,8 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
 
 - (void)dealloc
 {
+    [grc stop];
+    grc = nil;
   [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
@@ -680,7 +689,14 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
       }
     }
 
-    NSURLRequest *request = [self requestForSource:_source];
+    NSURLRequest *originalRequest = [self requestForSource:_source];
+    NSMutableURLRequest *mutableCopy = [originalRequest mutableCopy];
+    if((grc.reachabilityStatus == kGULReachabilityNotReachable) ||(grc.reachabilityStatus == kGULReachabilityUnknown )) {
+
+        mutableCopy.cachePolicy = NSURLRequestReturnCacheDataElseLoad;
+    }
+    NSURLRequest *request = mutableCopy;
+   //request.cachePolicy = NSURLRequestReturnCacheDataElseLoad;
     // Because of the way React works, as pages redirect, we actually end up
     // passing the redirect urls back here, so we ignore them if trying to load
     // the same url. We'll expose a call to 'reload' to allow a user to load
@@ -1092,7 +1108,13 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
   });
 
   WKNavigationType navigationType = navigationAction.navigationType;
-  NSURLRequest *request = navigationAction.request;
+  NSURLRequest *originalRequest = navigationAction.request;
+  NSMutableURLRequest *mutableCopy = [originalRequest mutableCopy];
+    if((grc.reachabilityStatus == kGULReachabilityNotReachable) ||(grc.reachabilityStatus == kGULReachabilityUnknown )) {
+        mutableCopy.cachePolicy = NSURLRequestReturnCacheDataElseLoad;
+    }
+    NSURLRequest *request = mutableCopy;
+  //request.cachePolicy = NSURLRequestReturnCacheDataElseLoad;
   BOOL isTopFrame = [request.URL isEqual:request.mainDocumentURL];
 
   if (_onShouldStartLoadWithRequest) {
@@ -1153,7 +1175,7 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
     if ([navigationResponse.response isKindOfClass:[NSHTTPURLResponse class]]) {
       NSHTTPURLResponse *response = (NSHTTPURLResponse *)navigationResponse.response;
       NSInteger statusCode = response.statusCode;
-
+        
       if (statusCode >= 400) {
         NSMutableDictionary<NSString *, id> *httpErrorEvent = [self baseEvent];
         [httpErrorEvent addEntriesFromDictionary: @{
@@ -1200,6 +1222,7 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
       // a new URL in the WebView before the previous one came back. We can just
       // ignore these since they aren't real errors.
       // http://stackoverflow.com/questions/1024748/how-do-i-fix-nsurlerrordomain-error-999-in-iphone-3-0-os
+        
       return;
     }
 
@@ -1210,15 +1233,17 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
       // implementing OAuth with a WebView.
       return;
     }
-
-    NSMutableDictionary<NSString *, id> *event = [self baseEvent];
-    [event addEntriesFromDictionary:@{
-      @"didFailProvisionalNavigation": @YES,
-      @"domain": error.domain,
-      @"code": @(error.code),
-      @"description": error.localizedDescription,
-    }];
-    _onLoadingError(event);
+     
+          
+        NSMutableDictionary<NSString *, id> *event = [self baseEvent];
+        [event addEntriesFromDictionary:@{
+          @"didFailProvisionalNavigation": @YES,
+          @"domain": error.domain,
+          @"code": @(error.code),
+          @"description": error.localizedDescription,
+        }];
+        _onLoadingError(event);
+     
   }
 }
 
@@ -1308,8 +1333,14 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
    * [_webView reload] doesn't reload the webpage. Therefore, we must
    * manually call [_webView loadRequest:request].
    */
-  NSURLRequest *request = [self requestForSource:self.source];
-
+  NSURLRequest *originalRequest = [self requestForSource:self.source];
+  NSMutableURLRequest *mutableCopy = [originalRequest mutableCopy];
+    if((grc.reachabilityStatus == kGULReachabilityNotReachable) ||(grc.reachabilityStatus == kGULReachabilityUnknown )) {
+        mutableCopy.cachePolicy = NSURLRequestReturnCacheDataElseLoad;
+    }
+    NSURLRequest *request = mutableCopy;
+    
+  //request.cachePolicy = NSURLRequestReturnCacheDataElseLoad;
   if (request.URL && !_webView.URL.absoluteString.length) {
     [_webView loadRequest:request];
   } else {
@@ -1535,8 +1566,15 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
 }
 
 - (NSURLRequest *)requestForSource:(id)json {
-  NSURLRequest *request = [RCTConvert NSURLRequest:self.source];
-
+  NSURLRequest *originalRequest = [RCTConvert NSURLRequest:self.source];
+    
+    
+  NSMutableURLRequest *mutableCopy = [originalRequest mutableCopy];
+    if((grc.reachabilityStatus == kGULReachabilityNotReachable) ||(grc.reachabilityStatus == kGULReachabilityUnknown )) {
+        mutableCopy.cachePolicy = NSURLRequestReturnCacheDataElseLoad;
+    }
+  
+  NSURLRequest *request = mutableCopy;
   // If sharedCookiesEnabled we automatically add all application cookies to the
   // http request. This is automatically done on iOS 11+ in the WebView constructor.
   // Se we need to manually add these shared cookies here only for iOS versions < 11.
@@ -1547,6 +1585,7 @@ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
       NSArray *cookies = [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookiesForURL:request.URL];
       NSDictionary<NSString *, NSString *> *cookieHeader = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies];
       NSMutableURLRequest *mutableRequest = [request mutableCopy];
+      mutableRequest.cachePolicy = NSURLRequestReloadRevalidatingCacheData;
       [mutableRequest setAllHTTPHeaderFields:cookieHeader];
       return mutableRequest;
     }
